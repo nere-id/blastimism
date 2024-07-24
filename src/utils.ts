@@ -1,10 +1,8 @@
 import { BigNumber } from 'ethers';
 import { TransactionDescription } from 'ethers/lib/utils';
+import { SignerOrProviderLike } from '@eth-optimism/sdk';
+import { CONFIG } from './config';
 import * as ethers from 'ethers';
-import 'dotenv/config';
-
-const ETH_YIELD_MANAGER = process.env.ETH_YIELD_MANAGER!;
-const OPTIMISM_PORTAL = process.env.OPTIMISM_PORTAL!;
 
 interface WithdrawalTransaction {
     nonce: BigNumber;
@@ -56,9 +54,10 @@ const extractWithdrawalTransaction = (tx: TransactionDescription): WithdrawalTra
     }    
 }
 
-export const getHintId = async (hash: string, provider: ethers.providers.Provider): Promise<number> => {
-    const optimismPortal = new ethers.Contract(OPTIMISM_PORTAL, optimismPortalAbi, provider);      
-    const rawTransaction = await provider.getTransaction(hash);            
+export const getHintId = async (hash: string, l1Provider: ethers.providers.Provider): Promise<number> => {
+    const NETWORK = (await l1Provider.getNetwork()).chainId === 1 ? 'MAINNET' : 'TESTNET'; 
+    const optimismPortal = new ethers.Contract(CONFIG[NETWORK].OPTIMISM_PORTAL, optimismPortalAbi, l1Provider);      
+    const rawTransaction = await l1Provider.getTransaction(hash);            
     const withdrawalProvenTransaction = optimismPortal.interface.parseTransaction(rawTransaction);                    
     const withdrawalTransaction = extractWithdrawalTransaction(withdrawalProvenTransaction);
     
@@ -76,7 +75,7 @@ export const getHintId = async (hash: string, provider: ethers.providers.Provide
     }
     
     // With the requestId, now all we need is the last chekpoint. We'll need a yieldmanager for the remainder
-    const yieldManager = new ethers.Contract(ETH_YIELD_MANAGER, yieldManagerAbi, provider);
+    const yieldManager = new ethers.Contract(CONFIG[NETWORK].ETH_YIELD_MANAGER, yieldManagerAbi, l1Provider);
     const lastCheckpointId = (await yieldManager.getLastCheckpointId()).toNumber();
     // Finally, we have everything we need to get our hintId
     const hintId = (await yieldManager.findCheckpointHint(requestId, 1, lastCheckpointId)).toNumber();
@@ -98,5 +97,30 @@ export const getLastCheckpointIdFromLogs = async (yieldManager: ethers.Contract)
     const lastEvent = events.pop();
     const checkpointId = (lastEvent?.args?.checkpointId).toNumber();
     return checkpointId;
+}
+
+export const getBlastimismOpts = (
+    l1SignerOrProvider: SignerOrProviderLike, 
+    l2SignerOrProvider: SignerOrProviderLike,
+    network: 'MAINNET' | 'TESTNET'    
+) => {
+    return {
+        l1SignerOrProvider,
+        l2SignerOrProvider,        
+        l1ChainId: CONFIG[network].L1_CHAIN_ID,
+        l2ChainId: CONFIG[network].L2_CHAIN_ID,
+        contracts: {
+            l1: {
+                AddressManager: CONFIG[network].ADDRESS_MANAGER,
+                L1CrossDomainMessenger: CONFIG[network].L1_CROSS_DOMAIN_MESSENGER,
+                L1StandardBridge: CONFIG[network].L1_STANDARD_BRIDGE,
+                OptimismPortal: CONFIG[network].OPTIMISM_PORTAL,
+                L2OutputOracle: CONFIG[network].L2_OUTPUT_ORACLE,
+                StateCommitmentChain: ethers.constants.AddressZero,
+                CanonicalTransactionChain: ethers.constants.AddressZero,
+                BondManager: ethers.constants.AddressZero
+            }
+        }
+    }
 }
 
